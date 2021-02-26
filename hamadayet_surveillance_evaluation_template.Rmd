@@ -1,0 +1,479 @@
+---
+title: "Hamdayit surveillance evaluation"
+author: "Hamdayit Outreach team"
+output:
+  word_document:
+    reference_docx: hamadayet_report_template.docx
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE, results='hide', message=FALSE, warning=FALSE}
+## hide all code chunks in the output, but show errors
+knitr::opts_chunk$set(echo = FALSE,       # hide all code chunks in output
+                      error = TRUE,       # show errors if they appear, but don't stop
+                      fig.width = 6*1.25, # Figure width
+                      fig.height = 6,      # Figure height
+                      warning = FALSE,
+                      message = FALSE
+                     )
+
+
+
+## set default NA to - in output, define figure width/height
+options(knitr.kable.NA = "-")
+
+
+
+## Installing required packages for this template
+required_packages <- c("knitr",       # create output docs
+                       "here",        # find your files
+                       "dplyr",       # clean/shape data
+                       # "forcats",     # clean/shape data
+                       "stringr",     # clean text
+                       "rio",         # read in data
+                       "ggplot2",     # create plots and charts
+                       "patchwork",   # combine plots in one
+                       "epikit",      # create categories from numerical variable
+                       "flextable",   # making tables in word
+                       "janitor",     # for data cleaning
+                       # "sitrep",      # MSF field epi functions
+                       # "linelist",    # Functions for cleaning/standardising data/dates
+                       # "matchmaker",  # dictionary-based standardization of variables
+                       "incidence",   # create epicurves
+                       # "aweek",       # define epi weeks
+                       "sf",          # encode spatial vector data
+                       "lubridate",   # for managing dates
+                       "ggspatial",   # plot maps
+                       "classInt",    # specifying breaks for maps
+                       "tsibble",     # time series data
+                       # "slider",      # time series data
+                       "tidyr",       # long/long adjustements to data
+                       "gt",          # make nice tables
+                       "gtsummary",   # make nice tables
+                       "viridis",     # additional palette to choose from
+                       "data.table")   # for taking last and first values from dataframes
+
+for (pkg in required_packages) {
+  # install packages if not already present
+  if (!pkg %in% rownames(installed.packages())) {
+    install.packages(pkg)
+  }
+  
+  # load packages to this current session 
+  library(pkg, character.only = TRUE)
+}
+
+
+
+## Set default options for plots and charts
+
+## set default text size to 16 for plots
+## give classic black/white axes for plots
+ggplot2::theme_set(theme_classic(base_size = 14))
+
+## sets the theme in ggplot for epicurves
+epicurve_theme <- theme(
+  axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), 
+  legend.title = element_blank(),
+  panel.grid.major.x = element_line(color = "grey60", linetype = 3),
+  panel.grid.major.y = element_line(color = "grey60", linetype = 3))
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// define_current_week \\\
+--------------------------------------------------------------------------------
+
+You need to set the week you want to report on. Generally, this is the previous
+week. Put it below.
+
+aweek::set_week_start will define the beginning of the week. The standard is
+Monday.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+<!-- **This section will need to be updated weekly** -->
+
+```{r define_current_week}
+
+## set current week and start date on Sunday
+reporting_week <- yearweek("2020 W50", week_start = 7)
+
+```
+
+Data as reported by `r reporting_week`.
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// read_data \\\
+---------------------------------------------------------------------------------->
+
+```{r read_ebs, warning = FALSE, message = FALSE}
+
+## EBS data 
+ebs_raw  <- rio::import(here::here("2020_hamdayit",
+                                   "3_data",
+                                   "current_ebs", 
+                                   "2020_HAMDAYIT_CEBS_DATABASE.xlsx")) %>% 
+  ## make all colnames lower case
+  janitor::clean_names() %>% 
+  ## remove the row that provides information on the format
+  slice(-1)
+
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// Data cleaning \\\
+---------------------------------------------------------------------------------->
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+This part of the script will create and clean variables in your data.
+
+All your cleaning and variable creation should happen in these chunks.
+That way, in case something goes wrong, you can push the small arrow at the top
+of the chunk to re-run all the code chunks up to the current one.
+
+The chunks are:
+- standardise_dates -- will set up and clean dates.
+- create_vars       -- creates variables based on other variables
+
+You must adapt this section according to your data!
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+<!-- ## EBS data -->
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// standardise_dates \\\
+--------------------------------------------------------------------------------
+
+This chunk will help you set up and clean your date variables.
+Also removes any empty columns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+```{r standardise_dates}
+
+ebs_cleaned <- ebs_raw %>%
+  ## Convert all variables with date to date variables
+  mutate(across(starts_with("date"), convert_to_date))
+
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// create_vars \\\
+--------------------------------------------------------------------------------
+
+This chunk will help you construct new variables from other variables. 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+```{r create_vars}
+
+## create epiweeks for the signals and assessments
+ebs_cleaned <- ebs_cleaned %>% 
+  ## create an epi week signal variable
+  mutate(epiweek_signal = yearweek(date_signal_received, 
+                                           week_start = 7)) %>% 
+  ## create an epi week verification signal
+  mutate(epiweek_verification = yearweek(date_of_verification, 
+                                                  week_start = 7))
+
+## recode the event variable
+ebs_cleaned <- ebs_cleaned %>% 
+  mutate(type_signal_cat = case_when(
+    type_of_signal == "1" ~ "Suspected AWD",
+    type_of_signal == "2" ~ "Suspected ABD",
+    type_of_signal == "3" ~ "Suspected AJS",
+    type_of_signal == "4" ~ "Suspected measles",
+    type_of_signal == "5" ~ "Malnutrition",
+    type_of_signal == "6" ~ "Death",
+    type_of_signal == "7" ~ "Unusual health event",
+    TRUE ~ NA_character_
+  )) %>% 
+  mutate(area_signal_cat = case_when(
+    area_of_signal ==  "1" ~ "Reception centre",
+    area_of_signal == "2" ~ "Ben Amar",
+    area_of_signal == "3" ~ "Bilala",
+    area_of_signal == "4" ~ "Hausa",
+    area_of_signal == "5" ~ "Helat Habash",
+    area_of_signal == "6" ~ "Helat Jadida",
+    area_of_signal == "7" ~ "Helat Sudani",
+    area_of_signal == "8" ~ "Kunama",
+    area_of_signal == "9" ~ "Market area",
+    TRUE ~ NA_character_
+  ))
+  
+
+## make a signal status variable
+ebs_cleaned <- ebs_cleaned %>% 
+  mutate(signal_status = case_when(
+    verified_by_epi_hps == "yes" ~ "Verified",
+    verified_by_epi_hps == "no" ~ "Discarded",
+    TRUE ~ NA_character_
+  )) %>% 
+  ## convert signal status to a factor and specify the levels
+  mutate(signal_status = factor(signal_status,
+                                levels = c("Verified", 
+                                           "Discarded")))
+
+## Create a variable that looks at difference in time between signal reporting and verification
+ebs_cleaned <- ebs_cleaned %>%
+  ## create a time difference variable between date of verification and signal received
+  mutate(signal_verification_diff = date_of_verification - date_signal_received) %>% 
+  ## Create a variable that looks at verified signals assessed within 2 days
+  mutate(verified_signal_assessed_diff = date_of_assessment - date_of_verification) %>%
+  ## create a binary variable for when difference is <= 2 days
+  mutate(verified_signal_assessed_diff_cat = case_when(
+    verified_signal_assessed_diff <= 2 ~ TRUE,
+    TRUE ~ FALSE
+  ))
+```
+
+
+## Usefulness
+### Number of alerts of the CEBS that resulted in public health action
+
+Across the period of evaluation, there were `r fmt_count(filter(ebs_cleaned,is_a_response_required == "yes", was_a_response_undertaken == "yes"))` alerts that resulted in public health action.
+
+
+### Type of response resulting from alert from CEBS
+```{r response_type_alert}
+
+# create a table by type of response
+ebs_cleaned %>% 
+  ## select relevant variable
+  select("Type of response" = what_kind_of_response) %>% 
+  ## make the table
+  tbl_summary()
+
+```
+
+
+## Representativeness
+### Percentage of the catchment area of the CEBS included during the period under surveillance
+Across the period of the evaluation, the following neighbourhoods were reported on `r unique(ebs_cleaned$area_signal)` which gives a `r str_glue(round((length(unique(ebs_cleaned$area_signal_cat))/9)*100, digits= 0), "%")` representativeness as there are a total of nine neighbourhoods under surveillance.
+
+### Comparison of characteristics of reported signals and diseases identified through the CEBS to all such events, including characteristics of the population, such as age and geographic location
+
+```{r characteristics_signals}
+
+ebs_cleaned %>% 
+  ## select variables of interest
+  select(area_signal_cat, type_signal_cat, total_number_affected, 
+         number_of_cases_5_years, number_of_cases_5_years_2,
+         number_of_deaths_5_years_14, number_of_deaths_5_years_15) %>% 
+  ## rename variables
+  rename("Deaths <5 years" = number_of_deaths_5_years_14,
+         "Deaths >= 5 years" = number_of_deaths_5_years_15,
+         "Cases <5 years" = number_of_cases_5_years,
+         "Cases >= 5 years"  = number_of_cases_5_years_2,
+         "Neighbourhood" = area_signal_cat,
+         "Total number affected" = total_number_affected) %>% 
+  tbl_summary(by = type_signal_cat)
+
+```
+
+
+
+ 
+## Completeness
+### Completeness of reporting by week of CEBS
+
+```{r completeness_reporting}
+
+## create a table by completeness of reporting
+ebs_cleaned %>% 
+  ## group by week
+  group_by(epiweek_signal) %>% 
+  ## get the unique names of reporting CHE
+  distinct(name_reporter) %>% 
+  tally() %>% 
+  ## rename columns
+  rename("Number CHE reporting" = n,
+         "Week" = epiweek_signal) %>% 
+  ## Make a table
+  flextable()
+  
+
+```
+
+### Completeness of datasets by CEBS
+We monitor the completeness of the following variables:
+- Date signal received
+- Name of reporter
+- Area of signal
+- Type of signal
+- Date onset/death
+- Total number affected
+- Verified by epi/hps
+- Date of assessment
+- Is a response required
+- Was a response undertaken
+- Date action undertaken
+
+```{r completeness_datasets}
+
+## select variables of interest
+ebs_cleaned %>% 
+  ## select key variables for completeness
+  select(date_signal_received, name_reporter, area_signal_cat, type_signal_cat,
+         date_onset_death, total_number_affected, verified_by_epi_hps,
+         date_of_assessment, is_a_response_required, was_a_response_undertaken, 
+         date_action_undertaken, epiweek_signal) %>% 
+  ## rename columns
+  rename("Name reporter" = name_reporter,
+         "Area of signal" = area_signal_cat,
+         "Type of signal" = type_signal_cat,
+         "Total number affected" = total_number_affected,
+         "Verified" = verified_by_epi_hps,
+         "Is a response required" = is_a_response_required,
+         "Was a response undertaken" = was_a_response_undertaken) %>% 
+  # group by week
+  group_by(epiweek_signal) %>% 
+  ## make a summary table
+  tbl_summary(missing = "always")
+
+```
+
+
+
+## Sensitivity
+
+
+## Positive predictive value
+### Proportion of true alerts identified by CEBS out of the total number of signals identified by CEBS
+
+There were `r fmt_count(ebs_cleaned, is_a_response_required == "yes")` alerts triggered among all the signals received.
+
+### Proportion of true alerts identified by CEBS out of the total number of signals identified by CEBS per week
+
+```{r weekly_proportion_alerts}
+## Calculate weekly PPE
+ebs_cleaned %>%
+  group_by(epiweek_signal) %>%
+  summarise(total_signals = n(),
+            true_alerts = sum(is_a_response_required == "yes",
+                              na.rm = TRUE),
+            weekly_proportion = round((true_alerts/total_signals) *100, digits = 0)) %>%
+  ## Only keep the proportion
+  select("Epiweek" = epiweek_signal,
+         "% PPE" = weekly_proportion) %>% 
+  kable()
+
+```
+
+### Proportion of responses resulting from CEBS out of the total number of signals identified by CEBS
+There were `r fmt_count(ebs_cleaned, was_a_response_undertaken == "yes")` responses triggered among all the signals received.
+
+```{r weekly_proportion_responses}
+## Calculate weekly PPE responses
+ebs_cleaned %>%
+  group_by(epiweek_signal) %>%
+  summarise(total_signals = n(),
+            true_alerts = sum(was_a_response_undertaken == "yes",
+                              na.rm = TRUE),
+            weekly_proportion = round((true_alerts/total_signals) *100, digits = 0)) %>%
+  ## Only keep the proportion
+  select("Epiweek" = epiweek_signal,
+         "% PPE" = weekly_proportion) %>%
+  kable()
+```
+
+
+
+
+## Timeliness of signals, assessment and response
+
+### Proportion of signals verified within 1 day after reporting to CEBS
+The number and proportion of signals verified (i.e verified or discarded) within 1 day after reporting was `r fmt_count(ebs_cleaned, signal_verification_diff <=1)`
+
+```{r weekly_signal_verified_1day}
+## Calculate weekly proportion of signals verified within 1 days
+ebs_cleaned %>%
+  group_by(epiweek_signal) %>%
+  summarise(total_signals = n(),
+            early_verified = sum(signal_verification_diff <=1,
+                                 na.rm = TRUE),
+            weekly_proportion = round((early_verified/total_signals) *100,
+                                      digits = 0)) %>%
+  ## Only keep the proportion
+  select("Epiweek" = epiweek_signal,
+         "% verified signals <= 1 day" = weekly_proportion) %>%
+  kable()
+```
+
+### Proportion of verified signals assessed within 2 days after reporting to CEBS
+The number and proportion of verified signals (i.e. those meeting the case definition and meeting or exceeding the threshold value) was `r fmt_count(filter(ebs_cleaned, signal_status == "Verified",  verified_signal_assessed_diff_cat == TRUE))`
+
+```{r weekly_proportion_assessed_2days}
+
+## calculate weekly proportion of verified signals assessed within 2 days
+ebs_cleaned %>%
+  ## only keep the verified signals
+  filter(signal_status == "Verified") %>%
+  group_by(epiweek_signal) %>%
+  ## calculate proportion of verified signals assessed within 2 days
+  summarise(total_signals = n(),
+            early_assessed = sum(verified_signal_assessed_diff_cat == T,
+                                 na.rm = TRUE),
+            weekly_proportion = round((early_assessed/total_signals) *100,
+                                      digits = 0)) %>%
+  ## Only keep the proportion
+  select("Epiweek" = epiweek_signal,
+         "% verified signals assessed <= 2 days" = weekly_proportion) %>%
+  kable()
+```
+
+
+### Median time to assessment and response (by MSF and non-MSF actors) after reporting to CEBS
+
+The median time in days between assessment and reporting to the system for verified signals was `r filter(ebs_cleaned, signal_status == "Verified") %>% mutate(median_assessment = median(date_of_assessment - date_signal_received, na.rm = TRUE)) %>% pull(median_assessment)`.
+
+The median time in days between response and reporting to the system for signals that underwent a response was `r filter(ebs_cleaned, was_a_response_undertaken == "yes") %>% mutate(median_response = median(date_action_undertaken - date_signal_received, na.rm = TRUE)) %>% pull(median_response)`.
+
+
+```{r weekly_median_asssessment_response_dataset}
+
+## Create a weekly assessment response database
+weekly_median_assessment_response <- ebs_cleaned %>%
+  ## only keep the verified signals i.e. not discarded
+  filter(signal_status == "Verified") %>%
+  group_by(epiweek_signal) %>%
+  summarise(median_assessment = median(date_of_assessment - date_signal_received,
+                                       na.rm = TRUE),
+            median_response = median(date_action_undertaken - date_signal_received,
+                                     na.rm = TRUE))
+```
+
+
+```{r plot_weekly_median_assessment_response}
+
+## Create a plot to look at median time between signal and assessment per week
+median_assessment_plot <- 
+  ggplot(weekly_median_assessment_response,
+         aes(x = epiweek_signal, y = median_assessment)) +
+  geom_col() + 
+  theme(title = element_text(size = 10)) +
+  labs(x = "Epidemiological week",
+       y = "Days",
+       title = "Median time in days per week \nbetween reception of verified signals \nand conduct of an assessment, Hamdayit") 
+
+## Create a plot to look at median time between signal and response per week
+median_response_plot <- 
+  ggplot(weekly_median_assessment_response,
+         aes(x = epiweek_signal, y = median_response)) +
+  geom_col() +
+  theme(title = element_text(size = 10)) +
+  labs(x = "Epidemiological week",
+       y = "Days",
+       title = "Median time in days per week \nbetween reception of signals \nand conduct of a response, Hamdayit")
+
+```
+
+```{r combine_median_plots}
+
+median_assessment_plot + median_response_plot
+
+```
+

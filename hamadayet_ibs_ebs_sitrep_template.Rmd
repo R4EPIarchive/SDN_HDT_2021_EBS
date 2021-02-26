@@ -1,0 +1,499 @@
+---
+title: "Hamadayet surveillance weekly report"
+author: "Hamadayet Outreach team"
+output:
+  word_document:
+    reference_docx: hamadayet_report_template.docx
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE, results='hide', message=FALSE, warning=FALSE}
+## hide all code chunks in the output, but show errors
+knitr::opts_chunk$set(echo = FALSE,       # hide all code chunks in output
+                      error = TRUE,       # show errors if they appear, but don't stop
+                      fig.width = 6*1.25, # Figure width
+                      fig.height = 6,      # Figure height
+                      warning = FALSE,
+                      message = FALSE
+                     )
+
+
+
+## set default NA to - in output, define figure width/height
+options(knitr.kable.NA = "-")
+
+
+
+## Installing required packages for this template
+required_packages <- c("knitr",       # create output docs
+                       "here",        # find your files
+                       "dplyr",       # clean/shape data
+                       # "forcats",     # clean/shape data
+                       "stringr",     # clean text
+                       "rio",         # read in data
+                       "ggplot2",     # create plots and charts
+                       "patchwork",   # combine plots in one
+                       "epikit",      # create categories from numerical variable
+                       "flextable",   # making tables in word
+                       "janitor",     # for data cleaning
+                       # "sitrep",      # MSF field epi functions
+                       # "linelist",    # Functions for cleaning/standardising data/dates
+                       # "matchmaker",  # dictionary-based standardization of variables
+                       "incidence",   # create epicurves
+                       # "aweek",       # define epi weeks
+                       "sf",          # encode spatial vector data
+                       "lubridate",   # for managing dates
+                       "ggspatial",   # plot maps
+                       "classInt",    # specifying breaks for maps
+                       "tsibble",     # time series data
+                       # "slider",      # time series data
+                       "tidyr",       # long/long adjustements to data
+                       "gt",          # make nice tables
+                       "gtsummary",   # make nice tables
+                       "viridis",     # additional palette to choose from
+                       "data.table")   # for taking last and first values from dataframes
+
+for (pkg in required_packages) {
+  # install packages if not already present
+  if (!pkg %in% rownames(installed.packages())) {
+    install.packages(pkg)
+  }
+  
+  # load packages to this current session 
+  library(pkg, character.only = TRUE)
+}
+
+
+
+## Set default options for plots and charts
+
+## set default text size to 16 for plots
+## give classic black/white axes for plots
+ggplot2::theme_set(theme_classic(base_size = 18))
+
+## sets the theme in ggplot for epicurves
+epicurve_theme <- theme(
+  axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), 
+  legend.title = element_blank(),
+  panel.grid.major.x = element_line(color = "grey60", linetype = 3),
+  panel.grid.major.y = element_line(color = "grey60", linetype = 3))
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// define_current_week \\\
+--------------------------------------------------------------------------------
+
+You need to set the week you want to report on. Generally, this is the previous
+week. Put it below.
+
+aweek::set_week_start will define the beginning of the week. The standard is
+Monday.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+<!-- **This section will need to be updated weekly** -->
+
+```{r define_current_week}
+
+## set current week and start date on Sunday
+reporting_week <- yearweek("2020 W51", week_start = 7)
+
+```
+
+Data as reported by `r reporting_week`.
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// read_data \\\
+---------------------------------------------------------------------------------->
+
+```{r read_ebs, warning = FALSE, message = FALSE}
+
+## EBS data 
+ebs_raw  <- rio::import(here::here("2020_hamdayit",
+                                   "3_data",
+                                   "current_ebs", 
+                                   "2020_HAMDAYIT_CEBS_DATABASE.xlsx")) %>% 
+  ## make all colnames lower case
+  janitor::clean_names() %>% 
+  ## remove the row that provides information on the format
+  slice(-1)
+
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// Data cleaning \\\
+---------------------------------------------------------------------------------->
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+This part of the script will create and clean variables in your data.
+
+All your cleaning and variable creation should happen in these chunks.
+That way, in case something goes wrong, you can push the small arrow at the top
+of the chunk to re-run all the code chunks up to the current one.
+
+The chunks are:
+- standardise_dates -- will set up and clean dates.
+- create_vars       -- creates variables based on other variables
+
+You must adapt this section according to your data!
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+<!-- ## EBS data -->
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// standardise_dates \\\
+--------------------------------------------------------------------------------
+
+This chunk will help you set up and clean your date variables.
+Also removes any empty columns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+```{r standardise_dates}
+
+ebs_cleaned <- ebs_raw %>%
+  ## Convert all variables with date to date variables
+  mutate(across(starts_with("date"), convert_to_date)) %>% 
+  ## Remove empty columns
+  janitor::remove_empty("cols")
+
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// create_vars \\\
+--------------------------------------------------------------------------------
+
+This chunk will help you construct new variables from other variables. 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+```{r create_vars}
+
+## create epiweeks for the signals and assessments
+ebs_cleaned <- ebs_cleaned %>% 
+  ## create an epi week signal variable
+  mutate(epiweek_signal = yearweek(date_signal_received, 
+                                           week_start = 7)) %>% 
+  ## create an epi week verification signal
+  mutate(epiweek_verification = yearweek(date_of_verification, 
+                                                  week_start = 7))
+
+## recode the event variable
+ebs_cleaned <- ebs_cleaned %>% 
+  mutate(type_signal_cat = case_when(
+    type_of_signal == "1" ~ "Suspected AWD",
+    type_of_signal == "2" ~ "Suspected ABD",
+    type_of_signal == "3" ~ "Suspected AJS",
+    type_of_signal == "4" ~ "Suspected measles",
+    type_of_signal == "5" ~ "Malnutrition",
+    type_of_signal == "6" ~ "Death",
+    type_of_signal == "7" ~ "Unusual health event",
+    TRUE ~ NA_character_
+  ))
+
+## make a signal status variable
+ebs_cleaned <- ebs_cleaned %>% 
+  mutate(signal_status = case_when(
+    verified_by_epi_hps == "yes" ~ "Verified",
+    verified_by_epi_hps == "no" ~ "Discarded",
+    TRUE ~ NA_character_
+  )) %>% 
+  ## convert signal status to a factor and specify the levels
+  mutate(signal_status = factor(signal_status,
+                                levels = c("Verified", 
+                                           "Discarded")))
+
+## convert some variables to integers
+ebs_cleaned <- ebs_cleaned %>% 
+  mutate(across(contains("number"), as.integer))
+
+
+
+```
+
+# Summary  
+This community event-based surveillance (CEBS) report covers topics of clusters of AWD, ABD, AJS, Measles, malnutrition, death and, unusual health events in Hamdayit in `r reporting_week`. To note that not all alerts and responses that are reported on a weekly basis relate to the reporting week but could be due to signal collecting in the previous week.
+
+## Reporting   
+  - During `r reporting_week`, there were a total of `r  nrow(filter(ebs_cleaned, epiweek_signal == reporting_week))` signals received of which `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week), signal_status == "Verified")` signals were verified i.e. not discarded. There were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week), is.Date(date_of_assessment))` rapid risk assessments and `r fmt_count(filter(ebs_cleaned, epiweek_signal == reporting_week), is.Date(date_action_undertaken))` response. 
+  
+## Regular outbreak reporting  
+  -  During `r reporting_week`, there were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Suspected AWD")` verified AWD, `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Suspected ABD")` ABD, `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Suspected AJS")` AJS, `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Suspected measles")` and measles signals. 
+
+## Malnutrition  
+  - During `r reporting_week`, there were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Suspected AWD")` verified malnutrition signals.
+
+## Deaths  
+  - During `r reporting_week`, there were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Death")` verified death signals, of which `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified" & total_number_affected >=2), type_signal_cat == "Death")` involved two or more people. 
+   
+## Unusual health events  
+  - During `r reporting_week`, there were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week & signal_status == "Verified"), type_signal_cat == "Unusual health event")` unusual health events and they affected a total of `r filter(ebs_cleaned, epiweek_signal == reporting_week & signal_status == "Verified" & type_signal_cat == "Unusual health event") %>% summarise(total = sum(total_number_affected, na.rm = TRUE)) %>% pull(total)`.
+
+
+  
+# Recommendations  
+
+  
+
+<!-- ## Table 1 -->
+<!-- Create summary table for the week -->
+## EBS activities in `r reporting_week`
+
+
+```{r summary_table}
+
+## Some text about this table (review and mention reasons given for the signals that were not investigated)
+
+ebs_cleaned %>% 
+  ## only keep signals reported during the reporting week
+  filter(epiweek_signal == reporting_week) %>% 
+  ## select variables to use for table
+  select("Signal type" = type_signal_cat, 
+         signal_status) %>% 
+  ## use tbl_summary from gtsummary package to make table
+  tbl_summary(by = signal_status, 
+              missing = "no") %>% 
+  ## add total for the week
+  add_overall() %>% 
+  bold_labels()
+```
+
+## Verified signals  and alerts in `r reporting_week`
+<!-- ## Figure 1 - Number of verified signals per week -->
+```{r plot_verified_signals}
+
+## make a dataset that only included verified signals
+ebs_verified <- ebs_cleaned %>% 
+  ## only  keep the verified signals
+  filter(signal_status == "Verified") %>% 
+  ## only keep those with epiweek data
+  filter(is.na(epiweek_signal) == FALSE) %>% 
+  ## only include signals from reporting_week and before
+  filter(epiweek_signal <= reporting_week) %>% 
+  ## group by week and type_signal_cat
+  group_by(epiweek_signal, type_signal_cat) %>% 
+  ## tally
+  tally()
+
+
+## Make a plot
+ebs_verified_plot <- ggplot(ebs_verified, aes(x = epiweek_signal, y = n, 
+                                              fill = type_signal_cat)) +
+  ## stacked barplot
+  geom_col(position = "stack") +
+  ## Use the viridis colour choice
+  scale_fill_viridis(discrete = TRUE, option = "D" ) +
+  ## standardised aesthetic modifications to plot
+  theme_classic() +
+  ## add labels
+  labs(x = "Week",
+       y = "Number of signals",
+       fill = "Detail of verified signals",
+       title = "Verified signals by epidemiological week")
+
+```
+
+## Alerts in `r reporting_week`
+After conducting rapid risk assessments in `r reporting_week`, there were `r fmt_count(filter(ebs_cleaned,epiweek_signal == reporting_week), is.Date(date_of_assessment))` verified signals that were deemed to require a response i.e. were an alert. To note that not all alerts may come from the reporting week and some may have arisen in the previous reporting week.
+```{r plot_alerts}
+
+## make a dataset that only included verified signals
+ebs_alert <- ebs_cleaned %>% 
+  ## only keep the alerts
+  filter(is_a_response_required == "yes") %>% 
+  ## only keep those with epiweek data
+  filter(is.na(epiweek_signal) == FALSE) %>% 
+  ## only include signals from reporting_week and before
+  filter(epiweek_signal <= reporting_week) %>% 
+  ## group by week and type_signal_cat
+  group_by(epiweek_signal, type_signal_cat) %>% 
+  ## tally
+  tally()
+
+
+## Make a plot
+ebs_alert_plot <- ggplot(ebs_alert, aes(x = epiweek_signal, y = n, 
+                                        fill = type_signal_cat)) +
+  ## stacked barplot
+  geom_col(position = "stack") +
+  ## Use the viridis colour choice
+  scale_fill_viridis(discrete = TRUE, option = "D" ) +
+  ## standardised aesthetic modifications to plot
+  theme_classic() +
+  ## add labels
+  labs(x = "Week",
+       y = "Number of alerts",
+       fill = "Detail of alerts",
+       title = "Alerts by epidemiological week")
+
+```
+
+
+```{r combine_verified_alerts, fig.width = 14, fig.height = 6}
+
+ebs_verified_plot + ebs_alert_plot
+
+```
+
+
+<!-- ## Map -->
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// read_shapefiles \\\
+--------------------------------------------------------------------------------
+
+To create maps, you need to have a shapefile of the area. Often, the MSF GIS
+unit can provide shapefiles.
+
+Your shapefile can be a polygon or points. Polygons do not need to be contiguous.
+
+The names of the polygons or points MUST match the names in your linelist.
+
+Your coordinate reference system needs to be WGS84.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+```{r read_shapefiles, message=FALSE}
+
+## read in shapefile
+# map <- read_sf(here::here("../../../2_GIS/GIS/MSF_GIS_Folder/Camp shape file/Site_boundaries.shp")) %>% 
+#   ## change all variables to lower case
+#   janitor::clean_names()
+
+```
+
+
+<!-- ## Base layer from OSM -->
+
+```{r obtain_base_layer}
+
+# tiles <- cartography::getTiles(
+#   map,
+#   type = "OpenStreetMap",
+#   zoom = NULL,
+#   crop = TRUE,
+#   verbose = FALSE,
+#   apikey = NA,
+#   cachedir = FALSE,
+#   forceDownload = FALSE
+# )
+
+```
+
+
+<!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// choropleth_maps \\\
+--------------------------------------------------------------------------------
+
+Once you have loaded your shapefile, you can map the case counts or attack rates.
+
+Make sure you delete or comment out the section you are not using.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+
+<!-- ## AWD past week -->
+```{r choropleth_awd_pw_maps, message = FALSE, warning = FALSE}
+
+# ## Join the past month dataset with map file
+# awd_past_week <- map %>% 
+#   ## join the count data from past month verified dataset
+#   left_join(count_verified_signals_past_week(ebs_cleaned, "AWD"), 
+#             by = "site_name") %>% 
+#   ## create levels for counts of awd
+#   mutate(awd_counts = fac_from_num(n)) %>% 
+#   ## remove the empty values
+#   filter(is.na(awd_counts) == FALSE)
+# 
+# 
+# ## Plot map of cases by camp
+# awd_past_week_map <- ggplot() +
+#   ## add in the back ground tiles
+#   ggspatial::layer_spatial(tiles, interpolate = TRUE) +
+#   # shapefile as polygon
+#   geom_sf(data = awd_past_week, aes(fill = awd_counts)) + 
+#   # needed to avoid gridlines being drawn
+#   coord_sf(datum = NA) + 
+#   # add a scalebar
+#   annotation_scale() + 
+#   # choose palette colour for fill
+#   scale_fill_brewer(palette = "YlOrRd") +
+#   ## Add camp number as label
+#   geom_sf_text(data = awd_past_week, aes(label = site_name), colour = "black",
+#                size = 2.5) +
+#   theme_void() +
+#   theme(plot.title = element_text(size= 12)) +
+#   labs(fill = "No. of signals",
+#        captions = str_glue("Source: MSF data from {reporting_week}"),
+#        title = str_glue("Number of verified AWD signals in \nHamdayit,{reporting_week}"))
+#   
+```
+
+<!-- ## AWD past 4 weeks -->
+
+```{r choropleth_awd_p4w_maps, message = FALSE, warning = FALSE}
+
+# ## Join the past month dataset with map file
+# awd_past_4weeks <- map %>% 
+#   ## join the count data from past month verified dataset
+#   left_join(count_verified_signals_past_4weeks(ebs_cleaned, "AWD"), 
+#             by = "site_name") %>% 
+#   ## create levels for counts of awd
+#   mutate(awd_counts = fac_from_num(n)) %>% 
+#   ## remove the empty values
+#   filter(is.na(awd_counts) == FALSE)
+#          
+# 
+# 
+# ## Plot map of cases by camp
+# awd_past_4weeks_map <- ggplot() +
+#   ## add in the back ground tiles
+#   ggspatial::layer_spatial(tiles, interpolate = TRUE) +
+#   # shapefile as polygon
+#   geom_sf(data = awd_past_4weeks, aes(fill = awd_counts)) + 
+#   # needed to avoid gridlines being drawn
+#   coord_sf(datum = NA) + 
+#   # add a scalebar
+#   annotation_scale() + 
+#   # choose palette colour for fill
+#   scale_fill_brewer(palette = "YlOrRd") +
+#   ## Add camp number as label
+#   geom_sf_text(data = awd_past_4weeks, aes(label = site_name), colour = "black",
+#                size = 2.5) +
+#   theme_void() +
+#   theme(plot.title = element_text(size= 12)) +
+#   labs(fill = "No. of signals",
+#        captions = str_glue("Source: MSF data from {three_weeks_ago} to {reporting_week}"),
+#        title = str_glue("Number of verified AWD signals in \nHamdayit, {three_weeks_ago}-{reporting_week}"))
+  
+```
+
+<!-- #### Combine AWD maps -->
+```{r combine_awd_maps, fig.height = 16, fig.height = 7}
+
+# awd_past_4weeks_map  + awd_past_week_map 
+
+```
+
+
+# Annex 1: EBS definitions and responsibilities
+
+**Signal**  A signal is reported data or information that represents a potential acute risk to human health. It is transmitted immediately and has not yet been verified as to whether or not it meets the case or event definition of the surveillance system. Signals are reported by CHVs, WHPs and TBAs.
+
+**Verified signal**: Reported information that meets the formal signal definition and is equal to or exceeds the threshold value for the specific signal. The epidemiologist/outreach lead reviews all verified signals to decide whether a risk assessment is required.
+
+**Alert**: An alert will refer to a public health event that has been i) verified and ii) risk assessed and iii) requires an intervention (an investigation, a response or a communication)
+
+**Response** A rapid response team is deployed and could conduct activities such as active case finding, vaccination, health promotion, WASH-related activities and case management  
+
+  i)	Where teams are mobilized for the purpose of response against their routine activities  
+  
+  ii) New resources are mobilized or materials prepared
+  
+  iii) Communication done specifically for the alert
+
+Response could be through:  (1) Routine epi teams, (2) Health promotion teams with special focus on the specific alert (3) Epi, WatSan and HP teams for alerts that require a combined response
+
+HAO and Advocacy teams for alerts that need external communication
+
+
+ 
+
