@@ -1,4 +1,4 @@
-"# SDN_HDT_2021_EBS" 
+# SDN_HDT_2021_EBS
 This repository includes code to 
 
 - evaluate the event-based surveillance system established in Hamdayet, Sudan in 2020. 
